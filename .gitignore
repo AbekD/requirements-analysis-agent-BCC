@@ -1,0 +1,15 @@
+.env
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+reports/*
+!reports/.gitkeep
+*.py[cod]
+*.pyo
+.idea/
+.vscode/
+.coverage
+.DS_Store
+Thumbs.db
