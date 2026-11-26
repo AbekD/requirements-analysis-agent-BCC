@@ -1,6 +1,7 @@
 import pymupdf
 import pytest
 
+from src.ingestion.extractor import extract_requirements
 from src.ingestion.parser import DocumentError, EmptyDocumentError, UnsupportedFormatError, parse_file
 
 
@@ -46,6 +47,20 @@ def test_pdf_parsing_keeps_pages_and_headings(tmp_path):
     assert doc.fmt == "pdf" and doc.page_of_line[1] == 1
     assert any("Functional requirements" == h.title for h in doc.headings)
     assert "стр. 1" in doc.location(2, 2)
+
+
+def test_adjacent_numbered_pdf_requirements_stay_separate(tmp_path):
+    path = tmp_path / "spec.pdf"
+    with pymupdf.open() as pdf:
+        page = pdf.new_page()
+        page.insert_text((72, 80), "Functional requirements", fontsize=20)
+        page.insert_text((72, 108), "FR-01. The service records each booking.", fontsize=10)
+        page.insert_text((72, 122), "It returns the booking number.", fontsize=10)
+        page.insert_text((72, 136), "FR-02. The service shows the room.", fontsize=10)
+        pdf.save(path)
+    items, _ = extract_requirements(parse_file(path))
+    assert [r.doc_id for r in items] == ["FR-01", "FR-02"]
+    assert "It returns" in items[0].text and "FR-02" not in items[0].text
 
 
 def test_empty_file_rejected(tmp_path):

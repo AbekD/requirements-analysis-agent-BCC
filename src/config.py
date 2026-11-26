@@ -8,7 +8,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-AGENT_VERSION = "0.1.0"
+AGENT_VERSION = "0.2.0"
 # Единственное место, где задана модель по умолчанию.
 DEFAULT_MODEL = "gemini-3.5-flash-lite"
 DEFAULT_RPM = 15
@@ -54,7 +54,13 @@ def get_agent_version() -> str:
         )
         commit = out.stdout.strip()
         if out.returncode == 0 and commit:
-            return f"{AGENT_VERSION} (commit {commit})"
+            worktree = subprocess.run(
+                ["git", "--no-optional-locks", "status", "--porcelain"],
+                cwd=Path(__file__).resolve().parent,
+                capture_output=True, text=True, timeout=3,
+            )
+            suffix = ", локальные изменения" if worktree.returncode == 0 and worktree.stdout.strip() else ""
+            return f"{AGENT_VERSION} (commit {commit}{suffix})"
     except (OSError, subprocess.SubprocessError):
         pass
     return AGENT_VERSION

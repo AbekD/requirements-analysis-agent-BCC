@@ -33,7 +33,7 @@ ISSUE_GROUPS: list[tuple[str, list[IssueCategory]]] = [
     ("Непоследовательная терминология", [IssueCategory.TERMINOLOGY]),
     ("Отсутствующие зависимости", [IssueCategory.MISSING_DEPENDENCY]),
     ("Конфликты между основным и дочерним документами", [IssueCategory.CROSS_DOCUMENT]),
-    ("Расхождения с критериями приёмки", [IssueCategory.ACCEPTANCE_MISMATCH]),
+    ("Расхождения с критериями приёмки", [IssueCategory.ACCEPTANCE_MISMATCH, IssueCategory.ARITHMETIC]),
     ("Отсутствующие сценарии", [IssueCategory.MISSING_SCENARIO]),
     ("Прочее", [IssueCategory.OTHER]),
 ]
@@ -53,7 +53,7 @@ def _ev_inline(ev: EvidenceRef) -> str:
     ref = f"{ev.ref}: " if ev.ref else ""
     if ev.verified:
         return f"✔ {ref}«{q}» ({ev.location})"
-    return f"⚠ {ref}«{q}» (цитата не найдена в документе)"
+    return f"⚠ {ref}цитата не подтверждена в указанном месте"
 
 
 def _ev_cell(evidence: list[EvidenceRef]) -> str:
@@ -188,13 +188,20 @@ def _set_checks(r: AnalysisResult) -> list[str]:
     out += ["### 4.1. Взаимосвязи между требованиями и документами", ""]
     if not r.cross_complete:
         out += ["⚠ **Анализ набора требований выполнен не полностью** — ниже только то, что удалось получить.", ""]
+    grouped = {issue_id: f for f in r.findings for issue_id in f.cross_issue_ids}
     for title, cats in ISSUE_GROUPS:
-        items = [x for x in r.cross_issues if x.category in cats]
+        items = [
+            x for x in r.cross_issues if x.category in cats
+            and (x.issue_id not in grouped or grouped[x.issue_id].cross_issue_ids[0] == x.issue_id)
+        ]
         out += [f"#### {title}", ""]
         if not items:
             out += ["Анализ не выполнен." if not r.cross_complete else "Замечаний не обнаружено.", ""]
             continue
         for x in items:
+            finding = grouped.get(x.issue_id)
+            if finding and len(finding.cross_issue_ids) > 1:
+                x = x.model_copy(update={"related_ids": finding.related_ids, "evidence": finding.evidence})
             out += _cross_issue(x)
     out += ["### 4.2. Полнота спецификации", ""]
     if not r.completeness_complete:
@@ -247,8 +254,7 @@ def _summary(r: AnalysisResult) -> list[str]:
            "| Серьёзность | Подтверждённые дефекты | Потенциальные проблемы | Всего |", "| :--- | :--- | :--- | :--- |"]
     for s in (Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM, Severity.LOW):
         out.append(f"| {SEV_RU[s].capitalize()} | {conf_sev[s]} | {pot_sev[s]} | {all_sev[s]} |")
-    out += ["", "Замечания по одному месту документа, найденные по разным критериям, объединены в одно; "
-                "замечания по критерию «Непротиворечивость», уже учтённые в разделе 4, повторно не считаются"
+    out += ["", "Сводка считает замечания по первопричинам"
                 + (f" (не посчитано повторно: {r.duplicates_merged})." if r.duplicates_merged else "."), ""]
     if r.errors:
         out += [f"⚠ Незавершённых частей анализа: {len(r.errors)} (см. раздел 1). Итоговые числа могут быть занижены.", ""]
@@ -272,17 +278,13 @@ def _src(f: Finding) -> str:
 
 
 def _critical(r: AnalysisResult) -> list[str]:
-    crit = [f for f in r.findings if f.severity == Severity.CRITICAL]
+    crit = [f for f in r.findings if f.severity == Severity.CRITICAL and f.certainty == Certainty.CONFIRMED]
     out = ["## 6. Критические дефекты", "",
            "Критичными считаются дефекты, из-за которых требование нельзя реализовать однозначно или объективно проверить.", ""]
     if not crit:
         return out + ["Критичных замечаний не выявлено" + ("." if not r.errors else " (но часть анализа не выполнена)."), ""]
-    for label, cert in (("Подтверждённые", Certainty.CONFIRMED), ("Потенциальные (требуют уточнения)", Certainty.POTENTIAL)):
-        items = [f for f in crit if f.certainty == cert]
-        if items:
-            out += [f"### {label}", ""]
-            for f in items:
-                out += _finding_block(f)
+    for finding in crit:
+        out += _finding_block(finding)
     return out
 
 
@@ -293,8 +295,8 @@ def _verdict(r: AnalysisResult) -> list[str]:
     out += [f"**Статус: `{r.final.verdict.value}`** — документ {VERDICT_RU[r.final.verdict]}.", "",
             r.final.justification, ""]
     if r.final.adjusted and r.final.llm_verdict:
-        out += [f"ℹ LLM предложила `{r.final.llm_verdict.value}`; вердикт ужесточён детерминированными правилами агента "
-                "(подтверждённые критичные/высокие дефекты или незавершённый анализ не допускают более мягкой оценки).", ""]
+        out += [f"ℹ LLM предложила `{r.final.llm_verdict.value}`. Агент скорректировал вердикт по серьёзности "
+                "подтверждённых дефектов и полноте прогона.", ""]
     if not r.final.complete:
         out += ["⚠ Обоснование сформировано без участия LLM.", ""]
     return out

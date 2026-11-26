@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections import Counter
 
 from src.analysis.llm_client import LLMClient, LLMError
 from src.analysis import prompts
@@ -83,7 +84,7 @@ def _heading_chain(doc: ParsedDocument, line: int) -> list[str]:
 
 def _is_block_start(line: str) -> bool:
     s = line.strip()
-    return (not s or bool(_FENCE.match(line)) or bool(_TABLE_ROW.match(line))
+    return (not s or bool(_FENCE.match(line)) or bool(_TABLE_ROW.match(line)) or bool(_DOC_ID.match(line))
             or bool(_BULLET.match(line)) or bool(_HR.match(line)))
 
 
@@ -186,9 +187,9 @@ def merge_classification(unit: Requirement, llm_type: ReqType) -> ReqType:
 def classify_with_llm(units: list[Requirement], client: LLMClient, batch_size: int = 40) -> list[str]:
     """Уточняет типы пакетами. Возвращает список предупреждений (сбои не фатальны)."""
     warnings: list[str] = []
-    by_id = {u.report_id: u for u in units}
     for start in range(0, len(units), batch_size):
         batch = units[start:start + batch_size]
+        by_id = {u.report_id: u for u in batch}
         try:
             resp = client.generate(system=prompts.CLASSIFY_SYSTEM, prompt=prompts.classify_prompt(batch),
                                    schema=ClassificationResponse)
@@ -198,12 +199,17 @@ def classify_with_llm(units: list[Requirement], client: LLMClient, batch_size: i
             log.error(msg)
             warnings.append(msg)
             continue
-        for item in resp.items:
-            unit = by_id.get(item.unit_id)
-            if unit is None:
-                warnings.append(f"LLM вернула неизвестный идентификатор элемента «{item.unit_id}» — проигнорирован.")
+        counts = Counter(item.unit_id for item in resp.items)
+        unexpected = counts.keys() - by_id.keys()
+        if unexpected:
+            warnings.append("Модель вернула ID за пределами пакета: " + ", ".join(sorted(unexpected)) + ".")
+        valid = {item.unit_id: item.type for item in resp.items if counts[item.unit_id] == 1}
+        for unit in batch:
+            if unit.report_id not in valid:
+                warnings.append(f"{unit.report_id}: отсутствует однозначная классификация модели. "
+                                "Сохранён тип по структуре документа.")
                 continue
-            new_type = merge_classification(unit, item.type)
+            new_type = merge_classification(unit, valid[unit.report_id])
             if new_type != unit.type:
                 log.debug("%s: %s → %s", unit.report_id, unit.type.value, new_type.value)
             unit.type = new_type
