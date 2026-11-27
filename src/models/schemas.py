@@ -112,6 +112,7 @@ class IssueCategory(str, Enum):
     FUNC_NONFUNC_CONFLICT = "FUNC_NONFUNC_CONFLICT"
     CROSS_DOCUMENT = "CROSS_DOCUMENT"
     ACCEPTANCE_MISMATCH = "ACCEPTANCE_MISMATCH"
+    ARITHMETIC = "ARITHMETIC"
     OTHER = "OTHER"
 
 
@@ -126,6 +127,7 @@ ISSUE_CATEGORY_RU: dict[IssueCategory, str] = {
     IssueCategory.FUNC_NONFUNC_CONFLICT: "Конфликт функциональных и нефункциональных требований",
     IssueCategory.CROSS_DOCUMENT: "Несогласованность основной и дочерней спецификаций",
     IssueCategory.ACCEPTANCE_MISMATCH: "Несоответствие требований и критериев приёмки",
+    IssueCategory.ARITHMETIC: "Арифметическая ошибка",
     IssueCategory.OTHER: "Прочее",
 }
 
@@ -274,6 +276,7 @@ class AssessmentLLM(BaseModel):
     explanation: str
     evidence: list[str] = Field(default_factory=list)
     suggestion: str = ""
+    missing_field: str = ""
 
 
 class IndividualResponse(BaseModel):
@@ -287,6 +290,15 @@ class IndividualResponse(BaseModel):
         if missing or dupes:
             raise ValueError(f"Ожидалась ровно одна оценка на каждый из 10 критериев; нет: {missing}; дубли: {dupes}")
         return self
+
+
+class IndividualBatchItem(BaseModel):
+    req_id: str
+    response: IndividualResponse
+
+
+class IndividualBatchResponse(BaseModel):
+    items: list[IndividualBatchItem]
 
 
 class EvidenceLLM(BaseModel):
@@ -331,6 +343,34 @@ class CompletenessResponse(BaseModel):
         return self
 
 
+class OmissionDecision(str, Enum):
+    SUPPORTED = "SUPPORTED"
+    COVERED = "COVERED"
+    UNPROVEN = "UNPROVEN"
+
+
+class OmissionReviewItem(BaseModel):
+    area: CompletenessArea
+    decision: OmissionDecision
+    explanation: str
+    evidence: list[EvidenceLLM] = Field(default_factory=list)
+
+
+class OmissionReviewResponse(BaseModel):
+    items: list[OmissionReviewItem]
+
+
+class LocalOmissionReviewItem(BaseModel):
+    req_id: str
+    decision: OmissionDecision
+    explanation: str
+    evidence: list[EvidenceLLM] = Field(default_factory=list)
+
+
+class LocalOmissionReviewResponse(BaseModel):
+    items: list[LocalOmissionReviewItem]
+
+
 class FinalResponse(BaseModel):
     verdict: Verdict
     justification: str
@@ -356,6 +396,7 @@ class Assessment(BaseModel):
     explanation: str
     evidence: list[EvidenceRef] = Field(default_factory=list)
     suggestion: str = ""
+    missing_field: str = ""
     certainty: Certainty | None = None   # только для FAIL / UNCERTAIN
     notes: list[str] = Field(default_factory=list)
 
@@ -400,6 +441,8 @@ class Finding(BaseModel):
     title: str
     related_ids: list[str] = Field(default_factory=list)
     criteria: list[str] = Field(default_factory=list)
+    cross_issue_ids: list[str] = Field(default_factory=list)
+    missing_field: str = ""
     explanation: str = ""
     recommendation: str = ""
     evidence: list[EvidenceRef] = Field(default_factory=list)

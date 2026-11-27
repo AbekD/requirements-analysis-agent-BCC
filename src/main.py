@@ -29,6 +29,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--language", default="ru", choices=["ru", "en"],
                    help="язык пояснений LLM; каркас отчёта всегда русский (по умолчанию ru)")
     p.add_argument("--rpm", type=int, help="лимит запросов в минуту (иначе GEMINI_REQUESTS_PER_MINUTE)")
+    p.add_argument("--batch-size", type=int, choices=range(1, 9), default=4,
+                   help="требований в одном запросе для коротких документов (по умолчанию 4)")
     p.add_argument("--verbose", "-v", action="store_true", help="подробный лог")
     return p
 
@@ -55,7 +57,8 @@ def main(argv: list[str] | None = None) -> int:
 
     client = GeminiClient(settings.api_key, settings.model, settings.requests_per_minute)
     try:
-        result = run_analysis(doc, client, get_agent_version(), args.language, progress=lambda m: log.info("%s", m))
+        result = run_analysis(doc, client, get_agent_version(), args.language,
+                              progress=lambda m: log.info("%s", m), individual_batch_size=args.batch_size)
     except LLMError as exc:
         log.error("Анализ прерван: %s", exc)
         return EXIT_FAILED

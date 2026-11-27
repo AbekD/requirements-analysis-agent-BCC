@@ -1,8 +1,8 @@
 from src.ingestion.extractor import (
-    assign_report_ids, extract_requirements, heuristic_type, merge_classification, split_into_units,
+    assign_report_ids, classify_with_llm, extract_requirements, heuristic_type, merge_classification, split_into_units,
 )
 from src.ingestion.parser import parse_file
-from src.models.schemas import ReqType
+from src.models.schemas import ClassificationResponse, ReqType, UnitClassLLM
 from tests.conftest import FakeClient
 
 
@@ -61,9 +61,27 @@ def test_llm_cannot_demote_explicit_requirements(sample_md):
 
 
 def test_extract_with_llm_and_with_llm_failure(sample_md):
-    from src.models.schemas import ClassificationResponse
     doc = parse_file(sample_md)
     units, warnings = extract_requirements(doc, FakeClient())
     assert units and not warnings and all(u.classified_by == "heuristic+llm" for u in units)
     units2, warnings2 = extract_requirements(doc, FakeClient(fail_on=(ClassificationResponse,)))
     assert len(units2) == len(units) and warnings2 and all(u.classified_by == "heuristic" for u in units2)
+
+
+def test_classification_rejects_duplicate_and_out_of_batch_ids(sample_md):
+    first, second = _units(sample_md)[:2]
+
+    class DuplicateClient:
+        def generate(self, *, system, prompt, schema):
+            assert schema is ClassificationResponse
+            return schema(items=[
+                UnitClassLLM(unit_id=first.report_id, type=ReqType.CONSTRAINT),
+                UnitClassLLM(unit_id=first.report_id, type=ReqType.PROCESS),
+                UnitClassLLM(unit_id="REQ-999", type=ReqType.PROCESS),
+            ])
+
+    original = first.type, second.type
+    warnings = classify_with_llm([first, second], DuplicateClient(), batch_size=1)
+    assert (first.type, second.type) == original
+    assert first.classified_by == second.classified_by == "heuristic"
+    assert any("REQ-999" in warning for warning in warnings)
